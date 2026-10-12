@@ -1,0 +1,44 @@
+Graphics/Displays:
+
+    NVIDIA GeForce RTX 5060 Ti:
+
+      Chipset Model: NVIDIA GeForce RTX 5060 Ti
+      Type: GPU
+      Bus: PCIe
+      Slot: Slot-1
+      PCIe Lane Width: x8
+      VRAM (Total): 16 GB
+      Vendor: NVIDIA (0x10de)
+      Device ID: 0x2d04
+      Revision ID: 0x00a1
+      Metal Support: Metal 3
+      Displays:
+        MAG 274QF:
+          Resolution: 2560 x 1440 (QHD/WQHD - Wide Quad High Definition)
+          UI Looks like: 2560 x 1440 @ 180.00Hz
+          Framebuffer Depth: 24-Bit Color (ARGB8888)
+          Main Display: Yes
+          Mirror: Off
+          Online: Yes
+
+    AMD Radeon RX 6800:
+
+      Chipset Model: AMD Radeon RX 6800
+      Type: GPU
+      Bus: PCIe
+      Slot: Slot-2
+      PCIe Lane Width: x16
+      VRAM (Total): 16 GB
+      Vendor: AMD (0x1002)
+      Device ID: 0x73bf
+      Revision ID: 0x00c3
+      ROM Revision: 113-1MS21XL203W_2108
+      Metal Support: Metal 3
+
+
+STDERR
+nvrm: b81 PERF_BOOST flags 0x12 INFINITE rc 0x0
+nvrm: b72 host-pointer import ON (probe NV_STATUS 0)
+nvrm: b80 LOCAL+mapped memory -> system RAM (b79 placement) (BAR1 8192 MB, VRAM 16311 MB, default)
+2026-10-12 20:47:05.189 system_profiler[3222:24117] Device PreExisted [00000001000004b5] NVIDIA GeForce RTX 5060 Ti (NVMTL over NVIDIA GeForce RTX 5060 Ti (NVK GB206-A))
+2026-10-12 20:47:05.189 system_profiler[3222:24117] Device PreExisted [0000000100000506] AMD Radeon RX 6800

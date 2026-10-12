@@ -1,0 +1,46 @@
+--- official-1.2.0/install.sh
++++ experimental-tahoe/install.sh
+@@ -83,13 +83,21 @@
+ v=$(sw_vers -productVersion); MAJ=${v%%.*}
+ BUILD=$(sw_vers -buildVersion)
+ printf '%s\n' "$BUILD" | grep -Eq '^[0-9]+[A-Za-z][A-Za-z0-9]+$' || die "cannot identify the current macOS build"
+-case $MAJ in 15) ;; *) die "This driver update is qualified for macOS 15 only (this is $v); no changes made";; esac
++case $MAJ in
++ 15) ;;
++ 26) [ "${NM_TAHOE_EXPERIMENTAL:-0}" = 1 ] && [ "$BUILD" = 25G241 ] || die "Tahoe is experimental; use the reviewed Tahoe wrapper for build 25G241"
++     echo "   EXPERIMENTAL: locally rebuilt NVAccel ABI2, macOS 26.7.1/25G241; GPU operation is not qualified" ;;
++ *) die "unsupported macOS $v; no changes made" ;;
++esac
+ # NVAccel is the one kext built per macOS: Tahoe made the IOAcceleratorFamily2 methods it inherits private (see
+ # kexts/NVRM/accel/gen_tahoe_fwd.py). The other three kexts are the same binaries on 15 and 26.
+ VAR="$HERE/Library/NullMoth/kexts/$MAJ"; [ -d "$VAR/NVAccel.kext" ] || die "this package has no NVAccel for macOS $MAJ"
+ kpath() { [ "$1" = NVAccel ] && echo "$VAR/NVAccel.kext" || echo "$HERE/Library/Extensions/$1.kext"; }
+-ioreg -r -c IOPCIDevice -d 1 | grep -q '"vendor-id" = <de100000>' || die "no NVIDIA GPU found on PCI"
+-ok "macOS $v, x86_64, NVIDIA GPU present"
++if ! ioreg -r -c IOPCIDevice -d 1 | grep -q '"vendor-id" = <de100000>'; then
++ [ "$MAJ" = 26 ] && [ "${NM_ALLOW_HIDDEN_NVIDIA:-0}" = 1 ] || die "no NVIDIA GPU found on PCI"
++ echo "   NVIDIA is currently hidden by the original EFI; installing inactive files for a later USB visibility test"
++fi
++ok "macOS $v, x86_64; NVIDIA PCI visibility is a separate runtime check"
+ 
+ step "2. package integrity"
+ (cd "$HERE" && shasum -a 256 -c SHA256SUMS --quiet) || die "SHA256SUMS mismatch: re-download the package"
+@@ -147,8 +155,8 @@
+ BK=$(mktemp -d "/Library/NullMoth/backup-$(date +%Y%m%d-%H%M%S).XXXXXX") && [ -n "$BK" ] && [ -d "$BK" ] || die "create unique backup directory"
+ step "4. back up what is there now -> $BK"
+ printf '%s\n' "$BUILD" > "$BK/macos-build" || die "record backup macOS build"
+-for k in $KEXTS; do [ ! -e "$EXT/$k.kext" ] || backup_copy "$k" cp -Rp "$EXT/$k.kext" "$BK/"; done
+-for b in NVMTLDriver.bundle NVIDIAShared.bundle nvmtl nvmtl-allow.txt; do [ ! -e "$GB/$b" ] || backup_copy "$b" cp -Rp "$GB/$b" "$BK/"; done
++for k in $KEXTS; do [ ! -e "$EXT/$k.kext" ] || backup_copy "$k" ditto "$EXT/$k.kext" "$BK/$k.kext"; done
++for b in NVMTLDriver.bundle NVIDIAShared.bundle nvmtl nvmtl-allow.txt; do [ ! -e "$GB/$b" ] || backup_copy "$b" ditto "$GB/$b" "$BK/$b"; done
+ [ ! -f "$KC" ] || backup_copy "kernel collection" cp -p "$KC" "$BK/AuxiliaryKernelExtensions.kc"
+ [ ! -d /Library/NullMoth/kexts ] || backup_copy "cached accelerators" ditto /Library/NullMoth/kexts "$BK/kexts"
+ [ ! -f /Library/NullMoth/os-major ] || backup_copy "OS record" cp -p /Library/NullMoth/os-major "$BK/os-major"
+@@ -195,6 +203,6 @@
+ ba=$(nvram boot-args 2>/dev/null | cut -f2-)
+ for a in nvfb=1 nvaccel=1; do case " $ba " in *" $a "*) ;; *) echo "   NOTE: boot-args lack '$a' — add it in your OpenCore config.plist (see README)";; esac; done
+ 
+-echo; echo "Done. Reboot now: sudo shutdown -r now"
++echo; echo "Installed. Review the installation output before rebooting; the active EFI was not changed."
+ echo "If macOS asks, allow the extensions in System Settings > Privacy & Security, then reboot once more."
+ echo "Undo: sudo ./uninstall.sh $BK"

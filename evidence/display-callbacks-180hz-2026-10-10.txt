@@ -1,0 +1,2 @@
+Display 441661705, nominal period 5555555/1000000000
+callbacks=895 median_ms=5.55662 p95_ms=5.63121 max_ms=18.356043 mean_ms=5.580731033557047

@@ -1,0 +1,12 @@
+// Only used in our unprivileged Metal probes, never in a system process.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static FILE *probe_fopen(const char *path, const char *mode) {
+    const char *candidate = getenv("RTX_PROBE_ALLOWLIST");
+    if (candidate && !strcmp(path, "/Library/GPUBundles/nvmtl-allow.txt") && !strcmp(mode, "r"))
+        return fopen(candidate, mode);
+    return fopen(path, mode);
+}
+__attribute__((used)) static struct { const void *replacement, *original; }
+interpose_fopen __attribute__((section("__DATA,__interpose"))) = { (const void *)probe_fopen, (const void *)fopen };

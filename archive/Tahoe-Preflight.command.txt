@@ -1,0 +1,63 @@
+#!/bin/bash
+# Build an isolated test AuxKC. Never install or load a driver, change EFI,
+# modify NVRAM, or replace a system kernel collection.
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+    echo 'Bu test için sudo gerekiyor; macOS kext sahipliğini root olarak doğrular.'
+    exit 2
+fi
+HERE=$(cd "$(dirname "$0")" && pwd)
+[ "$(uname -m)" = x86_64 ] || { echo 'STOP: x86_64 gerekiyor'; exit 2; }
+[ "$(sw_vers -productVersion)" = 26.7.1 ] && [ "$(sw_vers -buildVersion)" = 25G241 ] || {
+    echo 'STOP: bu aday macOS 26.7.1 / 25G241 için hazırlandı'; exit 2;
+}
+cd "$HERE"
+/usr/bin/shasum -a 256 -c SHA256SUMS --quiet
+STAGE=$(mktemp -d /var/tmp/nv-tahoe-preflight.XXXXXX)
+chmod 700 "$STAGE"
+share_logs() {
+    for report in kmutil.log inspect.txt identifiers.txt; do
+        [ ! -f "$STAGE/$report" ] || chmod 644 "$STAGE/$report"
+    done
+    chmod 755 "$STAGE"
+}
+trap share_logs EXIT
+mkdir "$STAGE/repo"
+for k in NVRM NVAccel NVRMFB NVRMAGDC; do
+    [ -d "$HERE/Kexts/$k.kext" ] && [ ! -L "$HERE/Kexts/$k.kext" ] || {
+        echo "STOP: eksik kext $k"; exit 2;
+    }
+    /usr/bin/ditto "$HERE/Kexts/$k.kext" "$STAGE/repo/$k.kext"
+done
+chown -R root:wheel "$STAGE/repo"
+chmod -R go-w "$STAGE/repo"
+BOOTKC=/System/Library/KernelCollections/BootKernelExtensions.kc
+SYSTEMKC=/System/Library/KernelCollections/SystemKernelExtensions.kc
+args=(create -n aux --volume-root / --allow-missing-kdk -B "$BOOTKC" -S "$SYSTEMKC"
+      --repository "$STAGE/repo" -A "$STAGE/aux.kc" -z)
+[ ! -f /System/Library/Kernels/kernel ] || args+=(--kernel /System/Library/Kernels/kernel)
+echo "Tahoe sürücü bağlama testi: $STAGE"
+if ! /usr/bin/kmutil "${args[@]}" > "$STAGE/kmutil.log" 2>&1; then
+    echo 'FAIL: test kernel koleksiyonu oluşturulamadı.'
+    tail -n 45 "$STAGE/kmutil.log"
+    echo "Tam kayıt: $STAGE/kmutil.log"
+    exit 1
+fi
+[ -s "$STAGE/aux.kc" ] || { echo 'FAIL: boş test koleksiyonu'; exit 1; }
+/usr/bin/kmutil inspect -a x86_64 -A "$STAGE/aux.kc" > "$STAGE/inspect.txt" 2>&1
+if ! /usr/bin/grep -oE 'com\.nullmoth\.[A-Za-z0-9]+' "$STAGE/inspect.txt" > "$STAGE/identifiers.txt"; then
+    echo 'FAIL: test koleksiyonunda NullMoth kimlikleri bulunamadı'
+    exit 1
+fi
+for k in NVRM NVAccel NVRMFB NVRMAGDC; do
+    if ! /usr/bin/grep -Fxq "com.nullmoth.$k" "$STAGE/identifiers.txt"; then
+        echo "FAIL: test koleksiyonunda com.nullmoth.$k bulunamadı"
+        tail -n 45 "$STAGE/kmutil.log"
+        exit 1
+    fi
+    echo "PASS: com.nullmoth.$k"
+done
+echo 'PASS: dört kext mevcut Tahoe kernel koleksiyonlarıyla bağlandı.'
+echo 'Bu bir bağlama testidir; GPU, ekran ve Metal çalışma testi henüz yapılmadı.'
+echo "Kayıtlar ve kullanılmayan test koleksiyonu: $STAGE"
+echo 'EFI, NVRAM, kurulu sürücüler ve sistem kernel koleksiyonları değiştirilmedi.'

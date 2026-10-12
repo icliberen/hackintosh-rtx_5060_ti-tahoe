@@ -1,0 +1,22 @@
+import Foundation
+import CoreGraphics
+import Metal
+let args=CommandLine.arguments
+let requested=args.count>1 ? Double(args[1]) ?? 60 : 60
+// Restrict this diagnostic helper to the known-working 60 and 85 Hz modes.
+guard requested==60 || requested==85 else {print("STOP: allowed diagnostic rates are 60 or 85 Hz");exit(2)}
+var ids=[CGDirectDisplayID](repeating:0,count:16);var count:UInt32=0
+let r=CGGetActiveDisplayList(16,&ids,&count)
+guard r == .success else {print("STOP: active display query failed \(r.rawValue)");exit(2)}
+let matching=ids.prefix(Int(count)).filter {CGDirectDisplayCopyCurrentMetalDevice($0)?.name.contains("RTX 5060 Ti") == true}
+guard matching.count==1,let id=matching.first else {print("STOP: expected exactly one active RTX5060Ti display");exit(2)}
+guard let old=CGDisplayCopyDisplayMode(id),let all=CGDisplayCopyAllDisplayModes(id,[kCGDisplayShowDuplicateLowResolutionModes:true] as CFDictionary) as? [CGDisplayMode],let selected=all.first(where:{$0.width==2560 && $0.height==1440 && $0.pixelWidth==2560 && $0.pixelHeight==1440 && abs($0.refreshRate-requested)<0.2}) else {print("STOP: expected 2560x1440 mode missing");exit(2)}
+print("NVIDIA display \(id): \(old.refreshRate) Hz (mode \(old.ioDisplayModeID)) -> \(selected.refreshRate) Hz (mode \(selected.ioDisplayModeID))")
+fflush(stdout)
+var config:CGDisplayConfigRef?
+guard CGBeginDisplayConfiguration(&config) == .success,let config=config else {print("STOP: could not begin display configuration");exit(1)}
+let configured=CGConfigureDisplayWithDisplayMode(config,id,selected,nil)
+guard configured == .success else {CGCancelDisplayConfiguration(config);print("STOP: mode configuration returned \(configured.rawValue)");exit(1)}
+let result=CGCompleteDisplayConfiguration(config,.forSession)
+guard result == .success else {print("STOP: session display configuration returned \(result.rawValue)");exit(1)}
+if let current=CGDisplayCopyDisplayMode(id) {print("Current: \(current.width)x\(current.height) @\(current.refreshRate) Hz, mode \(current.ioDisplayModeID)")}

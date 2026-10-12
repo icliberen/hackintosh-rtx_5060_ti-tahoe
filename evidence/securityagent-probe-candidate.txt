@@ -1,0 +1,4 @@
+Probe process: SecurityAgent
+Default Metal GPU: AMD Radeon RX 6800
+Available: AMD Radeon RX 6800
+PASS: RX 6800 computed 4096 correct results; NVIDIA visible=false

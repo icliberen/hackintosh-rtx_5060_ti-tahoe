@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+[ "$(id -u)" -eq 0 ] || { echo 'sudo gerekiyor'; exit 2; }
+[ "$(sw_vers -buildVersion)" = 25G241 ] || { echo 'STOP: beklenen Tahoe build değil'; exit 2; }
+SYS=/usr/sbin/sysctl
+[ "$($SYS -n debug.nvaccelfb)" = 1 ] && [ "$($SYS -n debug.nvaccel_iop)" = 1 ] || { echo 'STOP: NVIDIA ekran yolu hazır değil'; exit 2; }
+LOG="$HERE/live-flip-$(date +%Y%m%d-%H%M%S).log"
+OLD=$($SYS -n debug.nvaccel_iop_flip)
+echo "Kayıt: $LOG"
+$SYS debug.nvaccel_iop_flip debug.nvaccel_iop_flips debug.nvaccel_iop_ok debug.nvaccel_iop_fail debug.nvaccel_iop_flip_novram debug.nvaccel_iop_flip_stale debug.nvaccel_iop_flip_refused debug.nvaccel_iop_async_refused | tee "$LOG"
+echo 'NVIDIA doğrudan kare sunma yolu bu oturum için açılıyor.'
+$SYS -w debug.nvaccel_iop_flip=1 | tee -a "$LOG"
+echo '10 saniye boyunca fareyi ve bir pencereyi hareket ettir; yeniden başlatma.'
+/bin/sleep 10
+$SYS debug.nvaccel_iop_flip debug.nvaccel_iop_flips debug.nvaccel_iop_ok debug.nvaccel_iop_fail debug.nvaccel_iop_flip_novram debug.nvaccel_iop_flip_stale debug.nvaccel_iop_flip_refused debug.nvaccel_iop_async_refused | tee -a "$LOG"
+echo "Önceki değer: $OLD. Bu işlem EFI, kext veya NVRAM değiştirmedi."
+echo 'Görüntü kötüleşirse kapatma: sudo /usr/sbin/sysctl -w debug.nvaccel_iop_flip=0'
+echo 'Çıktıyı ve akıcılığın değişip değişmediğini bu sohbete gönder.'

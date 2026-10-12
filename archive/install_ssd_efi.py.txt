@@ -1,0 +1,185 @@
+#!/usr/bin/python3
+"""Guarded config-only migration; no boot-order, NVRAM or GPU-mode changes."""
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = Path(__file__).resolve().parent
+EFI_UUID = "[UUID-redacted]"
+STORE_UUID = "[UUID-redacted]"
+OLD_SHA = "f13e70675468f8f213df2cc1e6fc3dd08ee5f384c43dbad4d5cf46ca7808ccfa"
+NEW_SHA = "49be4959ebe6677cbc3045143aae9c89cd0db703f1f4088a608c7927e22ccc34"
+MANIFEST_SHA = "889e706b724ffac6e83399493d8130e3e1593f421a31d897d503bcb0d91ed104"
+VALIDATOR_SHA = "c76f907d5caad299889a2314ae68f03cd8538ad53f65a3c2c7c95ae0d0bb0b38"
+CONFIG_KEY = "oc/config.plist"
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+def disk_info(identifier):
+    return plistlib.loads(subprocess.check_output(["/usr/sbin/diskutil", "info", "-plist", identifier]))
+
+def payload(root):
+    result = {}
+    for p in Path(root).rglob("*"):
+        require(not p.is_symlink(), "EFI içinde beklenmeyen sembolik bağlantı: " + str(p))
+        if p.is_file() and not p.name.startswith("._") and p.name != ".DS_Store":
+            key = str(p.relative_to(root)).lower()
+            require(key not in result, "EFI yol çakışması: " + key)
+            result[key] = sha(p)
+    return result
+
+def check_payload(root, manifest, config_sha):
+    expected = dict(manifest)
+    expected[CONFIG_KEY] = config_sha
+    actual = payload(root)
+    differences = sorted(k for k in set(expected) | set(actual) if expected.get(k) != actual.get(k))
+    require(not differences, "EFI beklenen dosyalarla eşleşmiyor; üzerine yazılmadı: " + ", ".join(differences[:12]))
+    return actual
+
+def config_path(root):
+    matches = [p for p in root.rglob("*") if p.is_file() and str(p.relative_to(root)).lower() == CONFIG_KEY]
+    require(len(matches) == 1, "SSD OpenCore yapılandırması tekil değil.")
+    return matches[0]
+
+def replace_atomic(source, target):
+    fd, name = tempfile.mkstemp(prefix=".config-rtx-", suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(Path(source).read_bytes())
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(name, 0o644)
+        os.replace(name, target)
+        os.sync()
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+def write_receipt(path, receipt):
+    path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n")
+
+def install_config(root, manifest, candidate, backup_parent):
+    current = sha(config_path(root))
+    require(current in (OLD_SHA, NEW_SHA), "SSD config.plist daha sonra değişmiş; üzerine yazılmadı.")
+    check_payload(root, manifest, current)
+    if current == NEW_SHA:
+        print("PASS: SSD zaten çalışan USB yapılandırmasıyla aynı; 356 dosya doğrulandı.")
+        return None
+    stamp = datetime.datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    backup = Path(tempfile.mkdtemp(prefix="SSD-EFI-before-RTX-" + stamp + "-", dir=str(backup_parent)))
+    shutil.copytree(root, backup / "EFI")
+    check_payload(backup / "EFI", manifest, OLD_SHA)
+    before = payload(root)
+    receipt = {"status": "backed_up", "efi_partition_uuid": EFI_UUID,
+               "backup": str(backup), "before_config_sha256": OLD_SHA,
+               "installed_config_sha256": NEW_SHA, "changed_file": CONFIG_KEY,
+               "other_payload_files_unchanged": 355, "internal_boot_verified": False,
+               "boot_order_or_nvram_changed": False}
+    receipt_path = backup_parent / "last-install.json"
+    write_receipt(receipt_path, receipt)
+    print("PASS: Tam EFI yedeği doğrulandı: " + str(backup), flush=True)
+    target = config_path(root)
+    write_attempted = False
+    try:
+        # Recheck after backup so intervening changes are never overwritten.
+        check_payload(root, manifest, OLD_SHA)
+        write_attempted = True
+        replace_atomic(candidate, target)
+        check_payload(root, manifest, NEW_SHA)
+        after = payload(root)
+        require([k for k in before if before[k] != after[k]] == [CONFIG_KEY], "Beklenmeyen EFI değişikliği.")
+        receipt["status"] = "installed_verified"
+        write_receipt(receipt_path, receipt)
+    except BaseException:
+        if write_attempted:
+            replace_atomic(config_path(backup / "EFI"), target)
+            check_payload(root, manifest, OLD_SHA)
+            receipt["status"] = "rolled_back_after_error"
+            print("Hata: Önceki SSD yapılandırması geri yüklendi.", flush=True)
+        else:
+            receipt["status"] = "aborted_before_write"
+        write_receipt(receipt_path, receipt)
+        raise
+    print("PASS: SSD config.plist çalışan USB ile aynı SHA256 değerine sahip.")
+    print("PASS: Diğer 355 EFI dosyası aynı; Windows/Linux, açılış sırası ve NVRAM değiştirilmedi.")
+    print("SSD'den gerçek açılış henüz denenmedi. USB'yi ilk SSD açılışı doğrulanana kadar saklayın.")
+    return receipt
+
+def find_target():
+    root = disk_info("/")
+    stores = root.get("APFSPhysicalStores", [])
+    require(len(stores) == 1, "Tek macOS fiziksel diski bekleniyor.")
+    store = disk_info(stores[0]["APFSPhysicalStore"])
+    require(store.get("DiskUUID", "").upper() == STORE_UUID, "macOS fiziksel disk UUID'si değişmiş.")
+    whole = store["ParentWholeDisk"]
+    listing = plistlib.loads(subprocess.check_output(["/usr/sbin/diskutil", "list", "-plist", whole]))
+    matches = []
+    for disk in listing.get("AllDisksAndPartitions", []):
+        for part in disk.get("Partitions", []):
+            if part.get("Content") == "EFI":
+                info = disk_info(part["DeviceIdentifier"])
+                if info.get("DiskUUID", "").upper() == EFI_UUID:
+                    matches.append(info)
+    require(len(matches) == 1, "macOS SSD'sindeki beklenen EFI bölümü bulunamadı.")
+    info = matches[0]
+    require(info.get("Internal") and info.get("ParentWholeDisk") == whole,
+            "Hedef macOS'un iç SSD'si değil.")
+    return info
+
+def main():
+    action = sys.argv[1] if len(sys.argv) == 2 else ""
+    require(action in ("--prepare-check", "--install", "--restore"), "Geçersiz işlem.")
+    manifest_file = HERE / "original-efi-manifest.json"
+    candidate = HERE / "config-working-rtx.plist"
+    require(sha(manifest_file) == MANIFEST_SHA and sha(candidate) == NEW_SHA
+            and sha(HERE / "ocvalidate") == VALIDATOR_SHA, "Paket bütünlüğü doğrulanamadı.")
+    manifest = json.loads(manifest_file.read_text())
+    require(len(manifest) == 356 and manifest[CONFIG_KEY] == OLD_SHA, "Beklenmeyen EFI manifesti.")
+    subprocess.run([str(HERE / "ocvalidate"), str(candidate)], check=True)
+    info = find_target()
+    print("Hedef: macOS 480GB SSD, " + info["DeviceIdentifier"] + ", EFI UUID=" + EFI_UUID, flush=True)
+    if action == "--prepare-check":
+        print("PASS: Paket ve disk kimliği doğrulandı; bölüm bağlanmadı, dosya değiştirilmedi.")
+        return
+    require(os.geteuid() == 0, "SSD EFI'sini bağlamak/yazmak için sudo gerekiyor.")
+    if info.get("MountPoint") and not info.get("WritableVolume"):
+        subprocess.run(["/usr/sbin/diskutil", "unmount", info["DeviceIdentifier"]], check=True)
+    if not info.get("MountPoint") or not info.get("WritableVolume"):
+        subprocess.run(["/usr/sbin/diskutil", "mount", info["DeviceIdentifier"]], check=True)
+    info = disk_info(info["DeviceIdentifier"])
+    require(info.get("DiskUUID", "").upper() == EFI_UUID and info.get("MountPoint")
+            and info.get("WritableVolume"), "Doğru EFI yazılabilir bağlanamadı.")
+    root = Path(info["MountPoint"]) / "EFI"
+    require(root.is_dir() and not root.is_symlink(), "EFI dizini bulunamadı.")
+    if action == "--install":
+        install_config(root, manifest, candidate, HERE)
+    else:
+        receipt = json.loads((HERE / "last-install.json").read_text())
+        backup = Path(receipt["backup"])
+        require(backup.parent == HERE and receipt["efi_partition_uuid"] == EFI_UUID, "Geri alma yedeği doğrulanamadı.")
+        check_payload(root, manifest, NEW_SHA)
+        check_payload(backup / "EFI", manifest, OLD_SHA)
+        replace_atomic(config_path(backup / "EFI"), config_path(root))
+        check_payload(root, manifest, OLD_SHA)
+        receipt["status"] = "restored_original"
+        write_receipt(HERE / "last-install.json", receipt)
+        print("PASS: Önceki SSD EFI yapılandırması geri yüklendi.")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print("STOP: " + str(error), file=sys.stderr)
+        sys.exit(1)

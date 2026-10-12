@@ -1,0 +1,93 @@
+from pathlib import Path
+import datetime
+import hashlib
+import json
+import os
+import plistlib
+import shutil
+import subprocess
+
+out = Path('outputs/RTX-5060-Ti-on-test').resolve()
+usb = Path('/Volumes/OPENCORE')
+inner = Path('/Volumes/EFI 1/EFI')
+config = usb / 'EFI/oc/config.plist'
+mounts = subprocess.check_output(['mount'], text=True)
+assert any('/dev/disk1s1 on /Volumes/EFI 1 ' in line and 'read-only' in line for line in mounts.splitlines()), 'Expected readonly internal EFI'
+assert (inner / 'oc/config.plist').read_bytes() == (out / 'config-original.plist').read_bytes()
+stamp = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=3))).strftime('%Y%m%d-%H%M%S')
+backup = out / 'EFI-current-unchanged-20261009'
+if not backup.exists():
+    shutil.copytree(inner, backup, copy_function=shutil.copyfile, ignore=shutil.ignore_patterns('._*'))
+
+def hashes(root):
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file() and not p.name.startswith('._')}
+
+assert hashes(inner) == hashes(backup)
+previous = config.read_bytes()
+before = plistlib.loads(previous)
+after = plistlib.loads(previous)
+assert after['Booter']['Quirks']['SetupVirtualMap'] is True
+assert after['DeviceProperties']['Add']['PciRoot(0x0)/Pci(0x1,0x1)/Pci(0x0,0x0)']['disable-gpu'] == b'\x01\x00\x00\x00'
+after['Booter']['Quirks']['SetupVirtualMap'] = False
+guid = '[UUID-redacted]'
+after['NVRAM']['Add'][guid]['boot-args'] += ' nvdiag_vmap_off=1'
+
+def changes(a, b, path=''):
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in a.keys() | b.keys():
+            yield from changes(a.get(key), b.get(key), path + '/' + key)
+    elif a != b:
+        yield path, a, b
+
+diff = list(changes(before, after))
+assert len(diff) == 2, diff
+candidate = out / 'config-usb-vmap-off.plist'
+candidate.write_bytes(plistlib.dumps(after, sort_keys=False))
+result = subprocess.run([str(Path('work/nvidia-driver/ocvalidate').resolve()), str(candidate)], capture_output=True, text=True)
+(out / 'usb-vmap-off-validation.txt').write_text(result.stdout + result.stderr)
+assert result.returncode == 0, result.stdout + result.stderr
+prior = out / ('config-before-vmap-off-' + stamp + '.plist')
+prior.write_bytes(previous)
+usbfiles = usb / 'RTX-5060-Ti-files'
+usbbackup = usbfiles / prior.name
+shutil.copyfile(prior, usbbackup)
+temp = config.with_name('config.plist.tmp')
+temp.write_bytes(candidate.read_bytes())
+assert temp.read_bytes() == candidate.read_bytes()
+os.replace(temp, config)
+assert config.read_bytes() == candidate.read_bytes()
+state = json.loads((out / 'usb-test-state.json').read_text())
+state.update({
+    'stage': 'NVIDIA-disabled-DEBUG-SetupVirtualMap-False',
+    'boot_args': after['NVRAM']['Add'][guid]['boot-args'],
+    'test_config_sha256': hashlib.sha256(config.read_bytes()).hexdigest(),
+    'previous_config_backup': str(usbbackup),
+    'internal_efi_full_backup': str(backup),
+    'setup_virtual_map': False,
+    'functional_change': 'Booter/Quirks/SetupVirtualMap True -> False only; boot-args marker added',
+    'internal_efi_modified': False,
+    'next_action': 'Controlled USB boot with NVIDIA disabled and SetupVirtualMap=False',
+})
+(out / 'usb-test-state.json').write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n')
+doc = '''USB — SetupVirtualMap kapalı tanılama adayı
+
+Bu dosya sonraki USB denemesi için güncel yönergedir. Önceki tanılama yazıları önceki ayarları anlatır.
+
+İç disk EFI'si 356 dosya üzerinden başlangıç kopyasıyla karşılaştırıldı. Tüm dosyalar aynı; config-original.plist ile config.plist birebir aynı. Diğer iç EFI bölümünde OpenCore yok. Çalışan oturum opencore-version REL-108-2026-09-27 bildiriyor; F11'de hangi kayıt seçildiğini kanıtlayan BootCurrent bilgisi alınamadı.
+
+Önceki USB DEBUG denemesine göre yalnızca işlevsel değişiklik: Booter > Quirks > SetupVirtualMap True -> False. Açılışı ayırt etmek için nvdiag_vmap_off=1 işareti eklendi.
+NVIDIA disable-gpu=1 ile kapalı. NVIDIA sürücüsü kurulmadı. DEBUG yükleyici ve diğer Booter/UEFI/AMD/ACPI/GPU ayarları aynıdır. İç diskler yalnızca okunur bağlı; dosyaları değiştirilmedi.
+
+Gerekçe: logdaki AMD yamaları ve kext enjeksiyonları başarılı; son kayıt EB|LOG:EXITBS:START, kernel sonrası hata görünmüyor. Dortania rehberi SetupVirtualMap'i bu evrede incelenecek ayarlardan biri sayıyor. Rehber MSI B850M-G için özel bir doğrulama sağlamıyor; bu bir kontrollü aday, doğrulanmış düzeltme değil. Eski yerel yedekte aynı ayar kapalı; o yedeğin şu an bu işletim sisteminde çalıştığı doğrulanmadı.
+Kaynak: https://dortania.github.io/OpenCore-Install-Guide/troubleshooting/extended/kernel-issues.html#stuck-on-eb-log-exitbs-start
+
+Deneme: HDMI yalnız RX 6800'e bağlı kalsın. F11 > USB UEFI Partition 1 > Hackintosh SSD. OPENCORE (DMG) seçilmez. Açılırsa bu sohbete bildir; marker ve GPU durumu kontrol edilecek. Başarısız olursa sistemi son açtığın iç disk F11 OpenCore seçeneğine dön. Yeni log okunacak.
+'''
+(out / 'USB-VMAP-OFF-DENEME.txt').write_text(doc)
+shutil.copyfile(out / 'USB-VMAP-OFF-DENEME.txt', usbfiles / 'USB-VMAP-OFF-DENEME.txt')
+subprocess.run(['sync'], check=True)
+print('Internal exact backup:', backup)
+print('Changed fields:', diff)
+print('Previous USB config saved:', usbbackup)
+print('Candidate SHA256:', state['test_config_sha256'])
+print(result.stdout + result.stderr)

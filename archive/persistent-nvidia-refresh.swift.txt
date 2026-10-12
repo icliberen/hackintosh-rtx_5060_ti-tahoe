@@ -1,0 +1,67 @@
+import Foundation
+import CoreGraphics
+import Metal
+
+// Selection takes effect immediately AND is saved. This is not an offline
+// next-boot-only change. No reboot and no automatic rollback are performed.
+let args = Array(CommandLine.arguments.dropFirst())
+guard args.count == 2,
+      let requested = Double(args[0]), [120.0, 180.0].contains(requested),
+      ["--preflight", "--apply"].contains(args[1]) else {
+    print("Usage: RTX-Persistent-Refresh 120|180 --preflight|--apply")
+    exit(2)
+}
+var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+var count: UInt32 = 0
+guard CGGetActiveDisplayList(16, &ids, &count) == .success,
+      count == 1, let id = ids.prefix(Int(count)).first,
+      CGDirectDisplayCopyCurrentMetalDevice(id)?.name.contains("RTX 5060 Ti") == true else {
+    print("STOP: exactly one active display on RTX 5060 Ti is required.")
+    exit(2)
+}
+guard let current = CGDisplayCopyDisplayMode(id),
+      current.width == 2560, current.height == 1440,
+      current.pixelWidth == 2560, current.pixelHeight == 1440,
+      let modes = CGDisplayCopyAllDisplayModes(id, [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary) as? [CGDisplayMode],
+      let selected = modes.first(where: {
+          $0.width == 2560 && $0.height == 1440 &&
+          $0.pixelWidth == 2560 && $0.pixelHeight == 1440 &&
+          abs($0.refreshRate - requested) < 0.2
+      }) else {
+    print("STOP: required native 2560x1440 display mode is unavailable.")
+    exit(2)
+}
+// The 180 Hz test must begin from the newly user-verified working 120 Hz state.
+if requested == 180 && abs(current.refreshRate - 120) >= 0.2 {
+    print("STOP: the 180 Hz test requires the current working 120 Hz state.")
+    exit(2)
+}
+print("Current: \(current.width)x\(current.height) @\(current.refreshRate) Hz, mode \(current.ioDisplayModeID)")
+print("Target: \(selected.width)x\(selected.height) @\(selected.refreshRate) Hz, mode \(selected.ioDisplayModeID)")
+if args[1] == "--preflight" {
+    print("PASS: mode available; display configuration unchanged. Visual correctness is not tested.")
+    exit(0)
+}
+print("Applying now and saving for future logins. Visual correctness remains unverified; no automatic reboot.")
+fflush(stdout)
+var configuration: CGDisplayConfigRef?
+guard CGBeginDisplayConfiguration(&configuration) == .success, let configuration else {
+    print("STOP: could not begin display configuration.")
+    exit(1)
+}
+let configured = CGConfigureDisplayWithDisplayMode(configuration, id, selected, nil)
+guard configured == .success else {
+    CGCancelDisplayConfiguration(configuration)
+    print("STOP: mode configuration returned \(configured.rawValue)")
+    exit(1)
+}
+let completed = CGCompleteDisplayConfiguration(configuration, .permanently)
+guard completed == .success else {
+    print("STOP: persistent configuration returned \(completed.rawValue)")
+    exit(1)
+}
+guard let after = CGDisplayCopyDisplayMode(id), abs(after.refreshRate - requested) < 0.2 else {
+    print("STOP: requested refresh rate was not confirmed by CoreGraphics.")
+    exit(1)
+}
+print("PASS: \(after.refreshRate) Hz selected and configuration saved. This does not verify the visible image.")

@@ -1,0 +1,25 @@
+Reference updated to official 1.2.0. Exactly two new imports are expected from nvrm_off.h; their source usage was reviewed. Legacy PR60 reference counts in the output are for 1.1.0. No other symbol differences accepted.
+
+== NVAccel macOS 15: work/nvidia-driver/rebuilt/15/NVAccel.kext/Contents/MacOS/NVAccel ==
+   sha256    : 92ecc5e74a3244817ba2cca8e78394ca21de0e749b9049ab2c322569d7b9c526
+   imports   : 870 (reference 870, PR #60 868)
+   exports   : 333 (reference 333, PR #60 333)
+   SYMBOLS IMPORT: set equality with the shipped build -- OK
+   SYMBOLS EXPORT: set equality with the shipped build -- OK
+   __ZN11NVVidMemory13allocPhysicalEv at 0x3310, 912 bytes (function extent from the symbol table)
+   mov dword [rbp+d], imm stores in the function: [rbp-0x30]= 0, [rbp-0x38]= 0, [rbp-0x40]= 0, [rbp-0x48]= 0, [rbp-0x50]= 0, [rbp-0x58]= 0, [rbp-0x60]= 0, [rbp-0x68]= 0, [rbp-0x70]= 0, [rbp-0x78]= 0, [rbp-0x78]= 2
+   VRAM ABI  : writes version 2, exact reference encoding c7 45 88 02 00 00 00 (mov dword ptr [rbp-0x78], 2) + cookie store -- OK
+   VRAM ABI  : no version-1 store in allocPhysical -- OK
+   RESULT    : PASS
+
+== NVAccel macOS 26: work/nvidia-driver/rebuilt/26/NVAccel.kext/Contents/MacOS/NVAccel ==
+   sha256    : e8da3758d89efaa5b0c77701b4cd19f59a0f631f7c43af9dfb3524605d961cb7
+   imports   : 845 (reference 845, PR #60 843)
+   exports   : 401 (reference 401, PR #60 401)
+   SYMBOLS IMPORT: set equality with the shipped build -- OK
+   SYMBOLS EXPORT: set equality with the shipped build -- OK
+   __ZN11NVVidMemory13allocPhysicalEv at 0x3310, 912 bytes (function extent from the symbol table)
+   mov dword [rbp+d], imm stores in the function: [rbp-0x30]= 0, [rbp-0x38]= 0, [rbp-0x40]= 0, [rbp-0x48]= 0, [rbp-0x50]= 0, [rbp-0x58]= 0, [rbp-0x60]= 0, [rbp-0x68]= 0, [rbp-0x70]= 0, [rbp-0x78]= 0, [rbp-0x78]= 2
+   VRAM ABI  : writes version 2, exact reference encoding c7 45 88 02 00 00 00 (mov dword ptr [rbp-0x78], 2) + cookie store -- OK
+   VRAM ABI  : no version-1 store in allocPhysical -- OK
+   RESULT    : PASS

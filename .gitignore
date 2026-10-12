@@ -1,0 +1,11 @@
+*.kc
+*.dmg
+*.tar.gz
+*.kext/
+*.bundle/
+*.dylib
+EFI/
+config.plist
+mesa-cache/
+.DS_Store
+work/

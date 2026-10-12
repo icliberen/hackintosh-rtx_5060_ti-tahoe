@@ -1,0 +1,5 @@
+Probe process: SecurityAgent
+Default Metal GPU: NVIDIA GeForce RTX 5060 Ti (NVMTL over NVIDIA GeForce RTX 5060 Ti (NVK GB206-A))
+Available: NVIDIA GeForce RTX 5060 Ti (NVMTL over NVIDIA GeForce RTX 5060 Ti (NVK GB206-A))
+Available: AMD Radeon RX 6800
+PASS: RX 6800 computed 4096 correct results; NVIDIA visible=true

@@ -1,0 +1,46 @@
+import Foundation
+import CoreGraphics
+import Metal
+import Darwin
+
+func stop(_ text: String) -> Never { print("STOP: \(text)"); exit(1) }
+func mode(_ id: CGDirectDisplayID, _ hz: Double) -> CGDisplayMode? {
+    let modes = CGDisplayCopyAllDisplayModes(id, [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary) as? [CGDisplayMode] ?? []
+    return modes.first { $0.width == 2560 && $0.height == 1440 && $0.pixelWidth == 2560 && $0.pixelHeight == 1440 && abs($0.refreshRate - hz) < 0.2 }
+}
+func set(_ id: CGDirectDisplayID, _ selected: CGDisplayMode) -> Bool {
+    var config: CGDisplayConfigRef?
+    guard CGBeginDisplayConfiguration(&config) == .success, let config else { return false }
+    guard CGConfigureDisplayWithDisplayMode(config, id, selected, nil) == .success else { CGCancelDisplayConfiguration(config); return false }
+    return CGCompleteDisplayConfiguration(config, .forSession) == .success
+}
+// The independent child is armed BEFORE the high-rate modeset. A WindowServer
+// or kernel hang can still prevent it from executing; rollback is not guaranteed.
+if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--restore" {
+    guard let id = UInt32(CommandLine.arguments[2]) else { stop("Geçersiz ekran kimliği") }
+    Thread.sleep(forTimeInterval: 12)
+    guard let safe = mode(id, 85), set(id, safe) else { stop("85 Hz'e otomatik dönüş başarısız") }
+    guard let now = CGDisplayCopyDisplayMode(id), abs(now.refreshRate - 85) < 0.2 else { stop("85 Hz dönüşü doğrulanamadı") }
+    print("PASS: 85 Hz'e geri dönüldü."); fflush(stdout); exit(0)
+}
+guard CommandLine.arguments.count == 1 || CommandLine.arguments == [CommandLine.arguments[0], "--preflight"] else { stop("Geçersiz seçenek") }
+var ids = [CGDirectDisplayID](repeating: 0, count: 16); var count: UInt32 = 0
+guard CGGetActiveDisplayList(16, &ids, &count) == .success, count == 1,
+      let id = ids.first, CGDirectDisplayCopyCurrentMetalDevice(id)?.name.contains("RTX 5060 Ti") == true,
+      let current = CGDisplayCopyDisplayMode(id), abs(current.refreshRate - 85) < 0.2,
+      let target = mode(id, 180), mode(id, 85) != nil else { stop("Tek aktif RTX ekranı, mevcut 85 Hz ve 2560×1440 180 Hz modu gerekli") }
+var flip: Int32 = 0; var size = MemoryLayout<Int32>.size
+guard sysctlbyname("debug.nvaccel_iop_flip", &flip, &size, nil, 0) == 0, flip == 1 else { stop("Çalışan zero-copy flip yolu açık olmalı") }
+print("Ön kontrol PASS: tek RTX DP ekranı, 2560×1440, mevcut \(current.refreshRate) Hz; 180 Hz modu listede.")
+if CommandLine.arguments.contains("--preflight") { print("Yenileme hızı değiştirilmedi."); exit(0) }
+let watchdog = Process()
+watchdog.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+watchdog.arguments = ["--restore", String(id)]
+do { try watchdog.run() } catch { stop("Geri dönüş süreci başlatılamadı: \(error)") }
+print("12 saniyelik geri dönüş süreci başlatıldı. Görüntüyü gözlemle; hız ayarıyla oynama."); fflush(stdout)
+if set(id, target) { print("180 Hz ayarı gönderildi; görüntünün doğru olduğu henüz doğrulanmadı.") }
+else { print("180 Hz ayarı reddedildi; geri dönüş süreci yine çalışacak.") }
+fflush(stdout)
+watchdog.waitUntilExit()
+guard watchdog.terminationStatus == 0 else { stop("Geri dönüş başarısız") }
+print("Test bitti. Görüntünün düzgün mü, bozuk mu olduğunu ve bu çıktıyı sohbete gönder.")

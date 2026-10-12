@@ -1,0 +1,43 @@
+import Foundation
+import Metal
+import CoreGraphics
+
+// This is a separate test executable named SecurityAgent, not Apple's process.
+let expectedNVIDIA = CommandLine.arguments.contains("--expect-nvidia")
+let devices = MTLCopyAllDevices()
+print("Probe process: \(ProcessInfo.processInfo.processName)")
+print("Default Metal GPU: \(MTLCreateSystemDefaultDevice()?.name ?? "none")")
+for d in devices { print("Available: \(d.name)") }
+let hasNVIDIA = devices.contains { $0.name.contains("NVIDIA") }
+guard hasNVIDIA == expectedNVIDIA,
+      let amd = devices.first(where: { $0.name.contains("6800") }) else {
+    print("FAIL: unexpected GPU selection or RX 6800 unavailable")
+    exit(1)
+}
+do {
+    let src = """
+    #include <metal_stdlib>
+    using namespace metal;
+    kernel void verify_gpu(device uint *x [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+        x[i] = i * 3u + 7u;
+    }
+    """
+    let library = try amd.makeLibrary(source: src, options: nil)
+    guard let fn = library.makeFunction(name: "verify_gpu"),
+          let queue = amd.makeCommandQueue(), let command = queue.makeCommandBuffer(),
+          let buffer = amd.makeBuffer(length: 4096 * MemoryLayout<UInt32>.stride, options: .storageModeShared),
+          let encoder = command.makeComputeCommandEncoder() else { exit(2) }
+    let pipeline = try amd.makeComputePipelineState(function: fn)
+    memset(buffer.contents(), 0, buffer.length)
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(buffer, offset: 0, index: 0)
+    encoder.dispatchThreads(MTLSize(width: 4096, height: 1, depth: 1),
+                            threadsPerThreadgroup: MTLSize(width: min(256, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+    encoder.endEncoding()
+    command.commit()
+    command.waitUntilCompleted()
+    guard command.status == .completed else { print("FAIL: \(String(describing: command.error))"); exit(3) }
+    let values = buffer.contents().bindMemory(to: UInt32.self, capacity: 4096)
+    guard (0..<4096).allSatisfy({ values[$0] == UInt32($0) * 3 + 7 }) else { exit(4) }
+    print("PASS: RX 6800 computed 4096 correct results; NVIDIA visible=\(hasNVIDIA)")
+} catch { print("FAIL: \(error)"); exit(5) }

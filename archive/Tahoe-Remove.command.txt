@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+[ "$(id -u)" -eq 0 ] || { echo 'sudo gerekiyor'; exit 2; }
+[ "$(sw_vers -buildVersion)" = 25G241 ] || { echo 'STOP: işletim sistemi build değeri değişmiş; kaldırma yeniden incelenmeli'; exit 2; }
+echo 'NullMoth kext ve GPU bileşenleri kaldırılıyor; diğer üçüncü taraf kextler korunuyor.'
+/bin/bash "$HERE/pkgroot/uninstall.sh"
+echo 'İç disk EFI dosyaları değiştirilmedi. Bu sohbete çıktıyı gönder.'

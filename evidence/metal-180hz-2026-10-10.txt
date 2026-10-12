@@ -1,0 +1,8 @@
+nvrm: b81 PERF_BOOST flags 0x12 INFINITE rc 0x0
+nvrm: b72 host-pointer import ON (probe NV_STATUS 0)
+nvrm: b80 LOCAL+mapped memory -> system RAM (b79 placement) (BAR1 8192 MB, VRAM 16311 MB, default)
+Metal devices: 2
+Device: NVIDIA GeForce RTX 5060 Ti (NVMTL over NVIDIA GeForce RTX 5060 Ti (NVK GB206-A)), registryID=[redacted]
+PASS: 4096 GPU-computed results match
+Device: AMD Radeon RX 6800, registryID=[redacted]
+PASS: 4096 GPU-computed results match

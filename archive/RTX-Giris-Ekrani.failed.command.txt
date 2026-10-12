@@ -1,0 +1,74 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+TARGET=/Library/GPUBundles/nvmtl-allow.txt
+CANDIDATE="$SCRIPT_DIR/nvmtl-allow.candidate.txt"
+BACKUP="$SCRIPT_DIR/nvmtl-allow.before-loginwindow.txt"
+BEFORE_SHA=9da80bb06ba23fa4d40c30ef01b0e7b4551dcbaad90742a622a2af6c0e1a1467
+CANDIDATE_SHA=d59350bf7ce0ccd3fdcc4802358abeaef4354cbcb7ab433027af911c16e0916c
+PROBE_SHA=a6f548c1518ece172f38aa1abbca5bd402db2ad7fc4c2ee1da77639462e66926
+sha() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
+stop() { echo "STOP: $*"; exit 1; }
+[ "$(id -u)" = 0 ] || stop "Sürücü uygulama listesine yazmak için sudo /bin/bash ile çalıştırın."
+[ -f "$TARGET" ] && [ ! -L "$TARGET" ] || stop "Beklenen NVIDIA uygulama listesi bulunamadı."
+CURRENT_SHA=$(sha "$TARGET")
+case "${1:-}" in
+  --undo)
+    [ "$CURRENT_SHA" = "$CANDIDATE_SHA" ] || stop "Liste sonradan değişmiş; üzerine yazılmadı."
+    [ -f "$BACKUP" ] && [ ! -L "$BACKUP" ] && [ "$(sha "$BACKUP")" = "$BEFORE_SHA" ] || stop "Doğrulanmış önceki liste bulunamadı."
+    /bin/cp -p "$BACKUP" "$TARGET"
+    /bin/sync
+    echo "PASS: Önceki liste geri yüklendi; SecurityAgent düzeltmesi korunuyor. Giriş ekranı seçimi sonraki yeniden başlatmada yenilenir."
+    exit 0 ;;
+  "") ;;
+  *) stop "Desteklenen seçenek: --undo" ;;
+esac
+[ "$CURRENT_SHA" = "$BEFORE_SHA" ] || [ "$CURRENT_SHA" = "$CANDIDATE_SHA" ] || stop "Liste beklenenden farklı; üzerine yazılmadı."
+[ -f "$CANDIDATE" ] && [ ! -L "$CANDIDATE" ] && [ "$(sha "$CANDIDATE")" = "$CANDIDATE_SHA" ] || stop "Aday bütünlüğü doğrulanamadı."
+[ -f "$SCRIPT_DIR/loginwindow" ] && [ ! -L "$SCRIPT_DIR/loginwindow" ] && [ "$(sha "$SCRIPT_DIR/loginwindow")" = "$PROBE_SHA" ] || stop "GPU test programı doğrulanamadı."
+RUNNER=${SUDO_USER:-$(/usr/bin/stat -f '%Su' /dev/console)}
+[ "$RUNNER" != root ] && [ "$RUNNER" != loginwindow ] || stop "Normal oturum kullanıcısı belirlenemedi."
+/usr/bin/id "$RUNNER" >/dev/null || stop "Oturum kullanıcısı bulunamadı."
+LOG="$SCRIPT_DIR/apply-$(date +%Y%m%d-%H%M%S).log"
+exec > >(/usr/bin/tee "$LOG") 2>&1
+probe() {
+  /usr/bin/sudo -u "$RUNNER" /usr/bin/env -u DYLD_INSERT_LIBRARIES -u RTX_PROBE_ALLOWLIST -u NVMTL_ENABLE \
+    MESA_SHADER_CACHE_DIR="$SCRIPT_DIR/mesa-cache" "$SCRIPT_DIR/loginwindow" "$@"
+}
+if [ "$CURRENT_SHA" = "$CANDIDATE_SHA" ]; then
+  probe || stop "Uygulanmış adayın AMD Metal kontrolü başarısız."
+  echo "Ayar zaten uygulanmış. Gerçek giriş ekranını kontrol etmek için açık işleri kaydedip yeniden başlatın."
+  exit 0
+fi
+echo "Ön kontrol: gerçek RX 6800 Metal hesabı, test programı normal kullanıcı yetkisiyle çalışır."
+echo "Bu ayrı test programı Apple'ın çalışan loginwindow işlemi değildir."
+probe --expect-nvidia || stop "Ön kontrol başarısız; liste değiştirilmedi."
+if [ -e "$BACKUP" ]; then
+  [ ! -L "$BACKUP" ] && [ "$(sha "$BACKUP")" = "$BEFORE_SHA" ] || stop "Mevcut yedek doğrulanamadı."
+else
+  /bin/cp -p "$TARGET" "$BACKUP"
+fi
+[ "$(sha "$BACKUP")" = "$BEFORE_SHA" ] || stop "Yedek doğrulanamadı."
+[ "$(sha "$TARGET")" = "$BEFORE_SHA" ] || stop "Liste kontrol sırasında değişti; üzerine yazılmadı."
+TEMP=$(/usr/bin/mktemp /Library/GPUBundles/.nvmtl-allow-loginwindow.XXXXXX)
+trap '/bin/rm -f "$TEMP"' EXIT
+/bin/cat "$CANDIDATE" > "$TEMP"
+/usr/sbin/chown root:wheel "$TEMP"
+/bin/chmod 644 "$TEMP"
+[ "$(sha "$TEMP")" = "$CANDIDATE_SHA" ] || stop "Geçici aday doğrulanamadı."
+/bin/mv -f "$TEMP" "$TARGET"
+/bin/sync
+echo "Son kontrol: loginwindow adlı test işlemi yalnızca RX 6800 Metal cihazını kullanmalı."
+if ! probe; then
+  /bin/cp -p "$BACKUP" "$TARGET"
+  /bin/sync
+  stop "Son kontrol başarısız; önceki liste geri yüklendi."
+fi
+echo "PASS: Yeni loginwindow işlemleri için NVIDIA Metal dışlandı; RX 6800 GPU testi geçti."
+echo "SecurityAgent düzeltmesi korunuyor; diğer uygulamalar ve RTX masaüstü seçimi aynı."
+echo "Gerçek ilk giriş ekranındaki görünürlük henüz doğrulanmadı."
+echo "Açık işleri kaydedip normal şekilde yeniden başlatın; loginwindow işlemini elle sonlandırmayın."
+echo "EFI, 180 Hz seçimi, kextler, parola veya kimlik doğrulama ayarları değiştirilmedi."
+echo "Geri alma: sudo /bin/bash \"$SCRIPT_DIR/RTX-Giris-Ekrani.command\" --undo"
+echo "Kayıt: $LOG"

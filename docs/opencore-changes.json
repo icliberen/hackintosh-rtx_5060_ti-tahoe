@@ -1,0 +1,58 @@
+{
+  "scope": "Historical working snapshot; changes against original config, not a complete EFI or universal settings. ResizeGpuBars=-1, ResizeAppleGpuBars=-1, SetupVirtualMap=True and SIP FF0F0000 were already present.",
+  "changes": [
+    {
+      "path": "/DeviceProperties/Add/PciRoot(0x0)/Pci(0x1,0x1)/Pci(0x0,0x0)",
+      "before": {
+        "disable-gpu": {
+          "hex": "01000000"
+        }
+      },
+      "after": null
+    },
+    {
+      "path": "/Kernel/Block",
+      "before": [
+        {
+          "Arch": "Any",
+          "Comment": "Disable IONVMeFamily to prevent panic",
+          "Enabled": false,
+          "Identifier": "com.apple.iokit.IONVMeFamily",
+          "MaxKernel": "",
+          "MinKernel": "",
+          "Strategy": "Disable"
+        }
+      ],
+      "after": [
+        {
+          "Arch": "Any",
+          "Comment": "Disable IONVMeFamily to prevent panic",
+          "Enabled": false,
+          "Identifier": "com.apple.iokit.IONVMeFamily",
+          "MaxKernel": "",
+          "MinKernel": "",
+          "Strategy": "Disable"
+        },
+        {
+          "Arch": "x86_64",
+          "Comment": "NVIDIA test: exclude firmware framebuffer; Darwin 25 only",
+          "Enabled": true,
+          "Identifier": "com.apple.iokit.IONDRVSupport",
+          "MaxKernel": "25.99.99",
+          "MinKernel": "25.0.0",
+          "Strategy": "Exclude"
+        }
+      ]
+    },
+    {
+      "path": "/Misc/Debug/ApplePanic",
+      "before": false,
+      "after": true
+    },
+    {
+      "path": "/NVRAM/Add/7C436110-AB2A-4BBB-A880-FE41995C9F82/boot-args",
+      "before": "alcid=11 agdpmod=pikera revpatch=sbvmm -wegnoigpu",
+      "after": "alcid=11 agdpmod=pikera revpatch=sbvmm -wegnoigpu nvfb=1 nvaccel=1 nvfbheads=4 -nvkmsnosmooth amfi_get_out_of_my_way=0x1 amfi=0x80 -v keepsyms=1 debug=0x100"
+    }
+  ]
+}

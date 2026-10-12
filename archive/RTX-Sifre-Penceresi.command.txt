@@ -1,0 +1,70 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+TARGET=/Library/GPUBundles/nvmtl-allow.txt
+CANDIDATE="$SCRIPT_DIR/nvmtl-allow.candidate.txt"
+BACKUP="$SCRIPT_DIR/nvmtl-allow.before-securityagent.txt"
+ORIGINAL_SHA=8442c730ae5eb53e344b53fab3337d8adf849b788ea6d76ca29c1752a0b0755b
+CANDIDATE_SHA=9da80bb06ba23fa4d40c30ef01b0e7b4551dcbaad90742a622a2af6c0e1a1467
+PROBE_SHA=a6f548c1518ece172f38aa1abbca5bd402db2ad7fc4c2ee1da77639462e66926
+sha() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
+stop() { echo "STOP: $*"; exit 1; }
+[ "$(id -u)" = 0 ] || stop "Terminal'de sudo /bin/bash ile çalıştırın."
+[ -f "$TARGET" ] && [ ! -L "$TARGET" ] || stop "Beklenen sürücü ayar dosyası bulunamadı."
+CURRENT_SHA=$(sha "$TARGET")
+case "${1:-}" in
+  --undo)
+    [ "$CURRENT_SHA" = "$CANDIDATE_SHA" ] || stop "Ayar sonradan değişmiş; otomatik geri alma yapılmadı."
+    [ -f "$BACKUP" ] && [ ! -L "$BACKUP" ] && [ "$(sha "$BACKUP")" = "$ORIGINAL_SHA" ] || stop "Doğrulanmış yedek bulunamadı."
+    /bin/cp -p "$BACKUP" "$TARGET"
+    echo "PASS: Önceki NVIDIA uygulama listesi geri yüklendi. Yeniden başlatma gerekmez."
+    exit 0
+    ;;
+  "") ;;
+  *) stop "Desteklenen seçenek: --undo" ;;
+esac
+if [ "$CURRENT_SHA" = "$CANDIDATE_SHA" ]; then
+    echo "Ayar zaten uygulanmış. Şifre penceresinde görünürlüğü kontrol edin."
+    exit 0
+fi
+[ "$CURRENT_SHA" = "$ORIGINAL_SHA" ] || stop "Uygulama listesi beklenenden farklı; üzerine yazılmadı."
+[ -f "$CANDIDATE" ] && [ ! -L "$CANDIDATE" ] && [ "$(sha "$CANDIDATE")" = "$CANDIDATE_SHA" ] || stop "Aday ayar bütünlük kontrolü başarısız."
+[ -f "$SCRIPT_DIR/SecurityAgent" ] && [ ! -L "$SCRIPT_DIR/SecurityAgent" ] && [ "$(sha "$SCRIPT_DIR/SecurityAgent")" = "$PROBE_SHA" ] || stop "Metal test programı bütünlük kontrolü başarısız."
+if /usr/bin/pgrep -x SecurityAgent >/dev/null; then
+    stop "Açık şifre penceresini Esc ile kapatıp bu komutu tekrar çalıştırın."
+fi
+RUNNER=${SUDO_USER:-$(/usr/bin/stat -f '%Su' /dev/console)}
+[ "$RUNNER" != root ] && [ "$RUNNER" != loginwindow ] || stop "Oturum kullanıcısı belirlenemedi."
+/usr/bin/id "$RUNNER" >/dev/null || stop "Oturum kullanıcısı bulunamadı."
+LOG="$SCRIPT_DIR/apply-$(date +%Y%m%d-%H%M%S).log"
+exec > >(/usr/bin/tee "$LOG") 2>&1
+probe() {
+    /usr/bin/sudo -u "$RUNNER" /usr/bin/env -u DYLD_INSERT_LIBRARIES -u RTX_PROBE_ALLOWLIST -u NVMTL_ENABLE \
+        MESA_SHADER_CACHE_DIR="$SCRIPT_DIR/mesa-cache" "$SCRIPT_DIR/SecurityAgent" "$@"
+}
+echo "Ön kontrol: RX 6800 gerçek Metal testi (test programı kullanıcı yetkisiyle çalışır)."
+probe --expect-nvidia || stop "GPU ön kontrolü başarısız; ayar değiştirilmedi."
+if [ -e "$BACKUP" ]; then
+    [ ! -L "$BACKUP" ] && [ "$(sha "$BACKUP")" = "$ORIGINAL_SHA" ] || stop "Mevcut yedek doğrulanamadı."
+else
+    /bin/cp -p "$TARGET" "$BACKUP"
+fi
+TEMP=$(/usr/bin/mktemp /Library/GPUBundles/.nvmtl-allow-securityagent.XXXXXX)
+trap '/bin/rm -f "$TEMP"' EXIT
+/bin/cat "$CANDIDATE" > "$TEMP"
+/usr/sbin/chown root:wheel "$TEMP"
+/bin/chmod 644 "$TEMP"
+/bin/mv -f "$TEMP" "$TARGET"
+echo "Son kontrol: SecurityAgent için NVIDIA dışlandı; yerel AMD Metal kullanılabilir."
+if ! probe; then
+    /bin/cp -p "$BACKUP" "$TARGET"
+    stop "Son kontrol başarısız; önceki ayar otomatik geri yüklendi."
+fi
+echo "PASS: Yalnızca SecurityAgent için NVIDIA Metal seçimi devre dışı bırakıldı."
+echo "RTX masaüstü hızlandırması açık; EFI, kextler ve kimlik doğrulama ayarları değiştirilmedi."
+echo "Gerçek şifre penceresindeki görünürlük henüz test edilmedi. Yeniden başlatmayın."
+echo "Bir sonraki şifre penceresinde kutunun ve düğmelerin görünüp görünmediğini bu sohbete yazın."
+echo "Gri kalırsa Esc ile kapatın; tekrar Enter ile körlemesine işlem onaylamayın."
+echo "Geri alma: sudo /bin/bash \"$SCRIPT_DIR/RTX-Sifre-Penceresi.command\" --undo"
+echo "Kayıt: $LOG"

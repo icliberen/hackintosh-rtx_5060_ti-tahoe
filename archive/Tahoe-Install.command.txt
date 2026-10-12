@@ -1,0 +1,45 @@
+#!/bin/bash
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+[ "$(id -u)" -eq 0 ] || { echo 'sudo gerekiyor'; exit 2; }
+[ "$(sw_vers -productVersion)" = 26.7.1 ] && [ "$(sw_vers -buildVersion)" = 25G241 ] || {
+    echo 'STOP: bu paket yalnızca mevcut 26.7.1 / 25G241 denemesi için'; exit 2;
+}
+/usr/bin/python3 - "$HERE/PACKAGE-METADATA.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1]))
+if not m.get('usb_baseline_boot_verified'):
+    sys.exit('STOP: özgün USB EFI ile geri dönüş açılışı henüz doğrulanmadı; paket hazırlanmış ancak kurulum kapısı kapalı.')
+PY
+# Verify the original internal EFI without changing its contents.
+/usr/sbin/diskutil mount readOnly disk1s1
+/usr/bin/python3 - <<'PY'
+import hashlib,pathlib,plistlib,subprocess,sys
+info=plistlib.loads(subprocess.check_output(['/usr/sbin/diskutil','info','-plist','disk1s1']))
+text=subprocess.check_output(['/usr/sbin/diskutil','info','disk1s1'],text=True)
+if '[UUID-redacted]' not in text:
+    sys.exit('STOP: beklenen iç disk EFI bölüm kimliği bulunamadı')
+p=pathlib.Path(info['MountPoint'])/'EFI/oc/config.plist'
+if hashlib.sha256(p.read_bytes()).hexdigest() != 'f13e70675468f8f213df2cc1e6fc3dd08ee5f384c43dbad4d5cf46ca7808ccfa':
+    sys.exit('STOP: özgün iç disk EFI yapılandırması değişmiş')
+ba=subprocess.check_output(['/usr/sbin/nvram','boot-args'],text=True).split('\t',1)[-1].split()
+if any(x in ba for x in ['nvfb=1','nvaccel=1']):
+    sys.exit('STOP: kurulum önce NVIDIA kapalı mevcut açılışta yapılmalı')
+PY
+echo 'Yerel Tahoe adayı: dosyalar kurulacak, iç disk EFI yapılandırması korunacak.'
+echo 'NVIDIA mevcut EFI tarafından gizli; etkinleştirme daha sonraki USB denemesinde yapılacak.'
+LOG="$HERE/install-$(date +%Y%m%d-%H%M%S).log"
+echo "Kurulum kaydı: $LOG"
+set +e
+NM_TAHOE_EXPERIMENTAL=1 NM_ALLOW_HIDDEN_NVIDIA=1 /bin/bash "$HERE/pkgroot/install.sh" 2>&1 | /usr/bin/tee "$LOG"
+STATUS=("${PIPESTATUS[@]}")
+set -e
+if [ "${STATUS[0]}" -ne 0 ]; then
+    echo "Kurulum başarısız (kod ${STATUS[0]}). Yeniden başlatmadan çıktıyı gönder."
+    exit "${STATUS[0]}"
+fi
+if [ "${STATUS[1]}" -ne 0 ]; then
+    echo 'Kurulum tamamlandı ancak kayıt dosyası yazılamadı. Yeniden başlatmadan çıktıyı gönder.'
+    exit "${STATUS[1]}"
+fi
+echo 'Kurulum tamamlandı. Yeniden başlatmadan bu sohbete çıktıyı gönder.'

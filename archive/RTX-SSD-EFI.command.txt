@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+TASK_DIR=$(cd "$(dirname "$0")" && pwd)
+ACTION=${1:---install}
+case "$ACTION" in --prepare-check|--install|--restore) ;; *) echo "Desteklenen seçenekler: --prepare-check, --install, --restore"; exit 2 ;; esac
+if [ "$ACTION" != --prepare-check ]; then
+  [ "$(id -u)" = 0 ] || { echo "SSD EFI yazma işlemi için sudo /bin/bash ile çalıştırın."; exit 1; }
+  LOG="$TASK_DIR/transfer-$(date +%Y%m%d-%H%M%S).log"
+  exec > >(/usr/bin/tee "$LOG") 2>&1
+  echo "Kayıt: $LOG"
+fi
+exec /usr/bin/python3 "$TASK_DIR/install_ssd_efi.py" "$ACTION"

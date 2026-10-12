@@ -1,0 +1,84 @@
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[2]
+PACKAGE = ROOT / "outputs/RTX-5060-Ti-on-test/SSD-EFI-aktarim"
+spec = importlib.util.spec_from_file_location("ssd", PACKAGE / "install_ssd_efi.py")
+ssd = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ssd)
+ORIGINAL = ROOT / "outputs/RTX-5060-Ti-on-test/EFI-current-unchanged-20261009"
+
+class TransferTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self.tmp.name)
+        self.efi = self.directory / "EFI"
+        shutil.copytree(ORIGINAL, self.efi)
+        self.manifest = json.loads((PACKAGE / "original-efi-manifest.json").read_text())
+        self.candidate = PACKAGE / "config-working-rtx.plist"
+        self.sync = patch.object(ssd.os, "sync")
+        self.sync.start()
+
+    def tearDown(self):
+        self.sync.stop()
+        self.tmp.cleanup()
+
+    def install(self):
+        return ssd.install_config(self.efi, self.manifest, self.candidate, self.directory)
+
+    def test_config_only_backup_and_repeat(self):
+        before = ssd.payload(self.efi)
+        receipt = self.install()
+        after = ssd.payload(self.efi)
+        self.assertEqual([k for k in before if before[k] != after[k]], [ssd.CONFIG_KEY])
+        self.assertEqual(ssd.sha(ssd.config_path(self.efi)), ssd.NEW_SHA)
+        self.assertEqual(ssd.payload(Path(receipt["backup"]) / "EFI"), before)
+        self.assertIsNone(self.install())
+
+    def test_unexpected_efi_file_refused_before_write(self):
+        (self.efi / "oc/foreign-change.txt").write_text("unrelated change")
+        with self.assertRaisesRegex(RuntimeError, "foreign-change"):
+            self.install()
+        self.assertEqual(ssd.sha(ssd.config_path(self.efi)), ssd.OLD_SHA)
+        self.assertFalse((self.directory / "last-install.json").exists())
+
+    def test_failed_post_write_check_restores_original(self):
+        original_check = ssd.check_payload
+        def check(root, manifest, config_sha):
+            if root == self.efi and config_sha == ssd.NEW_SHA:
+                raise RuntimeError("injected post-write verification failure")
+            return original_check(root, manifest, config_sha)
+        with patch.object(ssd, "check_payload", side_effect=check):
+            with self.assertRaisesRegex(RuntimeError, "injected"):
+                self.install()
+        self.assertEqual(ssd.payload(self.efi), self.manifest)
+        self.assertEqual(json.loads((self.directory / "last-install.json").read_text())["status"], "rolled_back_after_error")
+
+    def test_intervening_config_change_is_not_overwritten(self):
+        original_copy = ssd.shutil.copytree
+        def copy(source, destination, *args, **kwargs):
+            result = original_copy(source, destination, *args, **kwargs)
+            if Path(source) == self.efi:
+                ssd.config_path(self.efi).write_bytes(b"intervening-user-change")
+            return result
+        with patch.object(ssd.shutil, "copytree", side_effect=copy):
+            with self.assertRaisesRegex(RuntimeError, "eşleşmiyor"):
+                self.install()
+        self.assertEqual(ssd.config_path(self.efi).read_bytes(), b"intervening-user-change")
+        self.assertEqual(json.loads((self.directory / "last-install.json").read_text())["status"], "aborted_before_write")
+
+    def test_wrong_macos_disk_refused(self):
+        with patch.object(ssd, "disk_info", side_effect=[
+            {"APFSPhysicalStores": [{"APFSPhysicalStore": "disk9s2"}]},
+            {"DiskUUID": "WRONG-DISK", "ParentWholeDisk": "disk9"},
+        ]):
+            with self.assertRaisesRegex(RuntimeError, "UUID"):
+                ssd.find_target()
+
+if __name__ == "__main__":
+    unittest.main()

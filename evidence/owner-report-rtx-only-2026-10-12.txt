@@ -1,0 +1,6 @@
+Report date: 2026-10-12 (Europe/Istanbul)
+Source: repository owner icliberen, in the publication request
+Statement: the setup also works without the RX 6800 installed.
+Evidence type: owner confirmation, not an automated RTX-only capture.
+Historical automated captures in this repository enumerate both GPUs.
+No standalone refresh-rate or separate compute-test result was specified in this confirmation.

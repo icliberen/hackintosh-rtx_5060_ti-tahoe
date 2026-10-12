@@ -1,0 +1,5 @@
+debug.nvaccel_iop_flip: 1
+debug.nvaccel_iop_async: 1
+debug.nvrmfb_flip_lean: 1
+
+STDERR

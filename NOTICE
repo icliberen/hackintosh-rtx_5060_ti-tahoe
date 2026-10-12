@@ -1,0 +1,29 @@
+RTX 5060 Ti / macOS Tahoe integration report
+
+Required Notice: Copyright (c) 2026 NullMoth Systems (https://nullmothsystems.com)
+Required Notice: Copyright (c) 2026 icliberen (https://github.com/icliberen) for original repository documentation and local integration helpers.
+
+Derived installer/uninstaller patches and archived installer source are based on
+NullMoth NVIDIA macOS Driver 1.2.0:
+https://github.com/nullmoth/nvidia-macos-driver/tree/c7dc26239bf85a648d5318fde135ebc09dc094a3
+PolyForm Noncommercial License 1.0.0; see LICENSE.
+
+Upstream diagnosis/rebuild and bundle copy work:
+https://github.com/nullmoth/nvidia-macos-driver/issues/51
+https://github.com/nullmoth/nvidia-macos-driver/pull/60
+https://github.com/nullmoth/nvidia-macos-driver/pull/59
+
+Third-party components referenced in the original graphics stack, not bundled:
+- metal2vulkan: Copyright (C) Anees Iqbal, LGPL-3.0-or-later
+  https://github.com/steelbrain/metal2vulkan
+- NVIDIA open GPU kernel modules (r610), MIT/GPL-2.0
+  https://github.com/NVIDIA/open-gpu-kernel-modules
+- Mesa NVK, Mesa component licenses (including MIT)
+  https://gitlab.freedesktop.org/mesa/mesa
+- NVIDIA GSP firmware, NVIDIA firmware redistribution terms
+- OpenCore, its upstream license
+  https://github.com/acidanthera/OpenCorePkg
+
+All original third-party licensing obligations remain with their components.
+No Apple operating system, framework, kernel collection or complete EFI is included.
+Local integration, checks and helper scripts were developed with Codex.
